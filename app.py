@@ -1,8 +1,11 @@
+import os
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-MODEL_VERSION = "1.0"
+MODEL_VERSION = "model-7"
+APPLICATION_VERSION = os.getenv("APPLICATION_VERSION", "0.0.0")
+GIT_COMMIT = os.getenv("GIT_COMMIT", "local")
 
 @app.route("/")
 def home():
@@ -14,8 +17,10 @@ def home():
 @app.route("/health")
 def health():
     return jsonify({
-        "status": "healthy",
-        "model_version": MODEL_VERSION
+        "application_version": APPLICATION_VERSION,
+        "model_version": MODEL_VERSION,
+        "git_commit": GIT_COMMIT,
+        "status": "healthy"
     })
 
 @app.route("/predict", methods=["POST"])
@@ -23,7 +28,6 @@ def predict():
     data = request.get_json()
     value = float(data["value"])
 
-    # Dummy ML prediction for teaching
     prediction = value * 2
 
     return jsonify({
@@ -34,5 +38,3 @@ def predict():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
-# CI protection test
