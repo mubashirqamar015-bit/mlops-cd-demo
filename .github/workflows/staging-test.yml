@@ -1,0 +1,21 @@
+name: Staging SSH Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ssh-test:
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Test SSH connection
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.STAGING_SSH_KEY }}" > ~/.ssh/staging_key
+          chmod 600 ~/.ssh/staging_key
+
+          ssh -o StrictHostKeyChecking=no \
+            -i ~/.ssh/staging_key \
+            "${{ vars.STAGING_USER }}@${{ vars.STAGING_HOST }}" \
+            "echo 'SSH connection successful'; hostname"
