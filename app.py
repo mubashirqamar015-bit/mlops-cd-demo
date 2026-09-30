@@ -3,7 +3,7 @@ from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-MODEL_VERSION = "model-7"
+MODEL_VERSION = "model-8"
 APPLICATION_VERSION = os.getenv("APPLICATION_VERSION", "0.0.0")
 GIT_COMMIT = os.getenv("GIT_COMMIT", "local")
 
