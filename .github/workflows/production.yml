@@ -5,9 +5,12 @@ on:
     tags:
       - "v*.*.*"
 
+  workflow_dispatch:
+
 permissions:
   contents: read
   packages: write
+  statuses: read
 
 jobs:
   validate:
@@ -97,6 +100,10 @@ jobs:
           RELEASE="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:$VERSION"
           LATEST="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:latest"
 
+          echo "Source image:  $SOURCE"
+          echo "Release tag:   $RELEASE"
+          echo "Latest tag:    $LATEST"
+
           docker buildx imagetools create \
             --tag "$RELEASE" \
             "$SOURCE"
@@ -144,7 +151,10 @@ jobs:
           IMAGE="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:$VERSION"
 
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.PRODUCTION_SSH_KEY }}" > ~/.ssh/production_key
+
+          printf '%s\n' "${{ secrets.PRODUCTION_SSH_KEY }}" \
+            > ~/.ssh/production_key
+
           chmod 600 ~/.ssh/production_key
 
           ssh -o StrictHostKeyChecking=no \
@@ -164,7 +174,10 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
 
           mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.PRODUCTION_SSH_KEY }}" > ~/.ssh/production_key
+
+          printf '%s\n' "${{ secrets.PRODUCTION_SSH_KEY }}" \
+            > ~/.ssh/production_key
+
           chmod 600 ~/.ssh/production_key
 
           ssh -o StrictHostKeyChecking=no \
@@ -173,8 +186,11 @@ jobs:
             "for i in {1..10}; do
                RESPONSE=\$(curl -fsS http://localhost:5000/health) && {
                  echo \"\$RESPONSE\"
-                 echo \"\$RESPONSE\" | grep -q '\"application_version\":\"$VERSION\"' &&
-                 echo \"\$RESPONSE\" | grep -q '\"status\":\"healthy\"' &&
+
+                 echo \"\$RESPONSE\" |
+                   grep -q '\"application_version\":\"$VERSION\"' &&
+                 echo \"\$RESPONSE\" |
+                   grep -q '\"status\":\"healthy\"' &&
                  exit 0
                }
 
