@@ -91,7 +91,7 @@ jobs:
           FILE_VERSION="$(git show "$RELEASE_SHA:VERSION")"
 
           if [ "$RELEASE_VERSION" != "$FILE_VERSION" ]; then
-            echo "Tag version:    $RELEASE_VERSION"
+            echo "Tag version:   $RELEASE_VERSION"
             echo "VERSION file:  $FILE_VERSION"
             echo "VERSION mismatch"
             exit 1
@@ -156,10 +156,12 @@ jobs:
           echo "Latest tag:    $LATEST"
 
           docker buildx imagetools create \
+            --prefer-index=false \
             --tag "$RELEASE" \
             "$SOURCE"
 
           docker buildx imagetools create \
+            --prefer-index=false \
             --tag "$LATEST" \
             "$SOURCE"
 
