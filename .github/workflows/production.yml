@@ -193,8 +193,12 @@ jobs:
           echo "Same image digest confirmed"
 
   deploy:
-    needs: promote
+    needs:
+      - validate
+      - promote
+
     runs-on: ubuntu-latest
+
     environment: production
 
     steps:
@@ -204,6 +208,9 @@ jobs:
         run: |
           VERSION="${{ needs.validate.outputs.release_version }}"
           IMAGE="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:$VERSION"
+
+          echo "Deploying version: $VERSION"
+          echo "Image: $IMAGE"
 
           mkdir -p ~/.ssh
 
@@ -230,6 +237,8 @@ jobs:
       - name: Verify production health
         run: |
           VERSION="${{ needs.validate.outputs.release_version }}"
+
+          echo "Checking production version: $VERSION"
 
           mkdir -p ~/.ssh
 
