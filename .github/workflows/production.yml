@@ -6,6 +6,11 @@ on:
       - "v*.*.*"
 
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to deploy, e.g. v1.2.0"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,28 +21,62 @@ jobs:
   validate:
     runs-on: ubuntu-latest
 
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      release_version: ${{ steps.release.outputs.release_version }}
+      release_sha: ${{ steps.release.outputs.release_sha }}
+      short_sha: ${{ steps.release.outputs.short_sha }}
+
     steps:
       - name: Checkout full history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Validate release tag
+      - name: Resolve release tag and commit
+        id: release
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RELEASE_TAG="${{ inputs.release_tag }}"
+          else
+            RELEASE_TAG="${GITHUB_REF_NAME}"
+          fi
 
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid release tag: $GITHUB_REF_NAME"
+          echo "Release tag: $RELEASE_TAG"
+
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: $RELEASE_TAG"
             exit 1
           fi
 
-          echo "Release version: $VERSION"
+          git fetch origin main --tags
+
+          if ! git rev-parse "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Tag does not exist: $RELEASE_TAG"
+            exit 1
+          fi
+
+          RELEASE_SHA="$(git rev-list -n 1 "refs/tags/$RELEASE_TAG")"
+          RELEASE_VERSION="${RELEASE_TAG#v}"
+          SHORT_SHA="${RELEASE_SHA::7}"
+
+          echo "Release tag:     $RELEASE_TAG"
+          echo "Release version: $RELEASE_VERSION"
+          echo "Release commit:  $RELEASE_SHA"
+          echo "Short SHA:       $SHORT_SHA"
+
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "release_version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+          echo "release_sha=$RELEASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Verify commit is on main
         run: |
+          RELEASE_SHA="${{ steps.release.outputs.release_sha }}"
+
           git fetch origin main
 
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" origin/main; then
             echo "Release commit is not on main"
             exit 1
           fi
@@ -46,12 +85,14 @@ jobs:
 
       - name: Verify VERSION matches tag
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          FILE_VERSION="$(git show "$GITHUB_SHA:VERSION")"
+          RELEASE_SHA="${{ steps.release.outputs.release_sha }}"
+          RELEASE_VERSION="${{ steps.release.outputs.release_version }}"
 
-          if [ "$TAG_VERSION" != "$FILE_VERSION" ]; then
-            echo "Tag version: $TAG_VERSION"
-            echo "VERSION file: $FILE_VERSION"
+          FILE_VERSION="$(git show "$RELEASE_SHA:VERSION")"
+
+          if [ "$RELEASE_VERSION" != "$FILE_VERSION" ]; then
+            echo "Tag version:    $RELEASE_VERSION"
+            echo "VERSION file:  $FILE_VERSION"
             echo "VERSION mismatch"
             exit 1
           fi
@@ -62,12 +103,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
+          RELEASE_SHA="${{ steps.release.outputs.release_sha }}"
+          SHORT_SHA="${{ steps.release.outputs.short_sha }}"
+
+          echo "Checking staging status for commit: $SHORT_SHA"
 
           STATUS="$(
             gh api \
-              "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/status" \
-              --jq '.statuses[] | select(.context == "staging/smoke-test") | .state' \
+              "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/status" \
+              --jq '
+                .statuses
+                | sort_by(.created_at)
+                | reverse
+                | .[]
+                | select(.context == "staging/smoke-test")
+                | .state
+              ' \
               | head -n 1
           )"
 
@@ -93,8 +144,8 @@ jobs:
 
       - name: Promote existing image
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          VERSION="${GITHUB_REF_NAME#v}"
+          SHORT_SHA="${{ needs.validate.outputs.short_sha }}"
+          VERSION="${{ needs.validate.outputs.release_version }}"
 
           SOURCE="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:sha-$SHORT_SHA"
           RELEASE="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:$VERSION"
@@ -114,8 +165,8 @@ jobs:
 
       - name: Verify image digests
         run: |
-          SHORT_SHA="${GITHUB_SHA::7}"
-          VERSION="${GITHUB_REF_NAME#v}"
+          SHORT_SHA="${{ needs.validate.outputs.short_sha }}"
+          VERSION="${{ needs.validate.outputs.release_version }}"
 
           SOURCE_DIGEST="$(
             docker buildx imagetools inspect \
@@ -146,8 +197,10 @@ jobs:
 
     steps:
       - name: Deploy release to production
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ needs.validate.outputs.release_version }}"
           IMAGE="ghcr.io/mubashirqamar015-bit/mlops-cd-demo:$VERSION"
 
           mkdir -p ~/.ssh
@@ -157,21 +210,24 @@ jobs:
 
           chmod 600 ~/.ssh/production_key
 
-          ssh -o StrictHostKeyChecking=no \
-            -i ~/.ssh/production_key \
-            "${{ vars.PRODUCTION_USER }}@${{ vars.PRODUCTION_HOST }}" \
-            "set -e;
-             docker pull $IMAGE;
-             docker rm -f mlops-api 2>/dev/null || true;
-             docker run -d \
-               --restart unless-stopped \
-               --name mlops-api \
-               -p 5000:5000 \
-               $IMAGE"
+          printf '%s' "$GHCR_TOKEN" |
+            ssh -o StrictHostKeyChecking=no \
+              -i ~/.ssh/production_key \
+              "${{ vars.PRODUCTION_USER }}@${{ vars.PRODUCTION_HOST }}" \
+              "docker login ghcr.io \
+                -u '${{ github.actor }}' \
+                --password-stdin &&
+               docker pull $IMAGE &&
+               docker rm -f mlops-api 2>/dev/null || true &&
+               docker run -d \
+                 --restart unless-stopped \
+                 --name mlops-api \
+                 -p 5000:5000 \
+                 $IMAGE"
 
       - name: Verify production health
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${{ needs.validate.outputs.release_version }}"
 
           mkdir -p ~/.ssh
 
